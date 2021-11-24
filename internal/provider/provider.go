@@ -2,12 +2,14 @@ package provider
 
 import (
 	"context"
+	"fmt"
+	"os"
+
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/sacloud/phy-go"
-	"os"
 )
 
 func New() tfsdk.Provider {
@@ -27,8 +29,8 @@ func (p *provider) GetSchema(_ context.Context) (tfsdk.Schema, diag.Diagnostics)
 				Optional: true,
 			},
 			"secret": {
-				Type:     types.StringType,
-				Optional: true,
+				Type:      types.StringType,
+				Optional:  true,
 				Sensitive: true,
 			},
 			"api_root_url": {
@@ -40,8 +42,8 @@ func (p *provider) GetSchema(_ context.Context) (tfsdk.Schema, diag.Diagnostics)
 }
 
 type providerData struct {
-	Token types.String `tfsdk:"token"`
-	Secret types.String `tfsdk:"secret"`
+	Token      types.String `tfsdk:"token"`
+	Secret     types.String `tfsdk:"secret"`
 	APIRootURL types.String `tfsdk:"api_root_url"`
 }
 
@@ -104,10 +106,10 @@ func (p *provider) Configure(ctx context.Context, req tfsdk.ConfigureProviderReq
 	}
 
 	p.client = &phy.Client{
-		Token:          token,
-		Secret:         secret,
-		APIRootURL:     apiRootURL,
-		Trace:          os.Getenv("SAKURACLOUD_TRACE") != "",
+		Token:      token,
+		Secret:     secret,
+		APIRootURL: apiRootURL,
+		Trace:      os.Getenv("SAKURACLOUD_TRACE") != "",
 	}
 }
 
@@ -118,7 +120,9 @@ func (p *provider) GetResources(_ context.Context) (map[string]tfsdk.ResourceTyp
 
 // GetDataSources - Defines provider data sources
 func (p *provider) GetDataSources(_ context.Context) (map[string]tfsdk.DataSourceType, diag.Diagnostics) {
-	return map[string]tfsdk.DataSourceType{}, nil
+	return map[string]tfsdk.DataSourceType{
+		"phy_server": dataSourceServerType{},
+	}, nil
 }
 
 func addCannotInterpolateInProviderBlockError(resp *tfsdk.ConfigureProviderResponse, attr string) {
@@ -127,4 +131,8 @@ func addCannotInterpolateInProviderBlockError(resp *tfsdk.ConfigureProviderRespo
 		"Can't interpolate into provider block",
 		"Interpolating that value into the provider block doesn't give the provider enough information to run. Try hard-coding the value, instead.",
 	)
+}
+
+func errorConvertingProvider(typ interface{}) diag.ErrorDiagnostic {
+	return diag.NewErrorDiagnostic("Error converting provider", fmt.Sprintf("An unexpected error was encountered converting the provider. This is always a bug in the provider.\n\nType: %T", typ))
 }
