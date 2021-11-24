@@ -2,56 +2,129 @@ package provider
 
 import (
 	"context"
-
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/sacloud/phy-go"
+	"os"
 )
 
-func init() {
-	// Set descriptions to support markdown syntax, this will be used in document generation
-	// and the language server.
-	schema.DescriptionKind = schema.StringMarkdown
-
-	// Customize the content of descriptions when output. For example you can add defaults on
-	// to the exported descriptions if present.
-	// schema.SchemaDescriptionBuilder = func(s *schema.Schema) string {
-	// 	desc := s.Description
-	// 	if s.Default != nil {
-	// 		desc += fmt.Sprintf(" Defaults to `%v`.", s.Default)
-	// 	}
-	// 	return strings.TrimSpace(desc)
-	// }
+func New() tfsdk.Provider {
+	return &provider{}
 }
 
-func New(version string) func() *schema.Provider {
-	return func() *schema.Provider {
-		p := &schema.Provider{
-			DataSourcesMap: map[string]*schema.Resource{
-				"scaffolding_data_source": dataSourceScaffolding(),
-			},
-			ResourcesMap: map[string]*schema.Resource{
-				"scaffolding_resource": resourceScaffolding(),
-			},
-		}
+type provider struct {
+	client *phy.Client
+}
 
-		p.ConfigureContextFunc = configure(version, p)
+// GetSchema .
+func (p *provider) GetSchema(_ context.Context) (tfsdk.Schema, diag.Diagnostics) {
+	return tfsdk.Schema{
+		Attributes: map[string]tfsdk.Attribute{
+			"token": {
+				Type:     types.StringType,
+				Optional: true,
+			},
+			"secret": {
+				Type:     types.StringType,
+				Optional: true,
+				Sensitive: true,
+			},
+			"api_root_url": {
+				Type:     types.StringType,
+				Optional: true,
+			},
+		},
+	}, nil
+}
 
-		return p
+type providerData struct {
+	Token types.String `tfsdk:"token"`
+	Secret types.String `tfsdk:"secret"`
+	APIRootURL types.String `tfsdk:"api_root_url"`
+}
+
+func (p *provider) Configure(ctx context.Context, req tfsdk.ConfigureProviderRequest, resp *tfsdk.ConfigureProviderResponse) {
+	// Retrieve provider data from configuration
+	var config providerData
+	diags := req.Config.Get(ctx, &config)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if config.Token.Unknown {
+		addCannotInterpolateInProviderBlockError(resp, "token")
+		return
+	}
+	if config.Secret.Unknown {
+		addCannotInterpolateInProviderBlockError(resp, "secret")
+		return
+	}
+
+	var token string
+	if config.Token.Null {
+		token = os.Getenv("SAKURACLOUD_ACCESS_TOKEN")
+	} else {
+		token = config.Token.Value
+	}
+	if token == "" {
+		// Error vs warning - empty value must stop execution
+		resp.Diagnostics.AddError(
+			"Unable to find token",
+			"Token cannot be an empty string",
+		)
+		return
+	}
+
+	var secret string
+	if config.Secret.Null {
+		secret = os.Getenv("SAKURACLOUD_ACCESS_TOKEN_SECRET")
+	} else {
+		secret = config.Token.Value
+	}
+	if secret == "" {
+		// Error vs warning - empty value must stop execution
+		resp.Diagnostics.AddError(
+			"Unable to find secret",
+			"Secret cannot be an empty string",
+		)
+		return
+	}
+
+	var apiRootURL string
+	if config.APIRootURL.Null {
+		apiRootURL = os.Getenv("SAKURACLOUD_PHY_API_ROOT_URL")
+	} else {
+		apiRootURL = config.Token.Value
+	}
+	if apiRootURL == "" {
+		apiRootURL = phy.DefaultAPIRootURL
+	}
+
+	p.client = &phy.Client{
+		Token:          token,
+		Secret:         secret,
+		APIRootURL:     apiRootURL,
+		Trace:          os.Getenv("SAKURACLOUD_TRACE") != "",
 	}
 }
 
-type apiClient struct {
-	// Add whatever fields, client or connection info, etc. here
-	// you would need to setup to communicate with the upstream
-	// API.
+// GetResources - Defines provider resources
+func (p *provider) GetResources(_ context.Context) (map[string]tfsdk.ResourceType, diag.Diagnostics) {
+	return map[string]tfsdk.ResourceType{}, nil
 }
 
-func configure(version string, p *schema.Provider) func(context.Context, *schema.ResourceData) (interface{}, diag.Diagnostics) {
-	return func(context.Context, *schema.ResourceData) (interface{}, diag.Diagnostics) {
-		// Setup a User-Agent for your API client (replace the provider name for yours):
-		// userAgent := p.UserAgent("terraform-provider-scaffolding", version)
-		// TODO: myClient.UserAgent = userAgent
+// GetDataSources - Defines provider data sources
+func (p *provider) GetDataSources(_ context.Context) (map[string]tfsdk.DataSourceType, diag.Diagnostics) {
+	return map[string]tfsdk.DataSourceType{}, nil
+}
 
-		return &apiClient{}, nil
-	}
+func addCannotInterpolateInProviderBlockError(resp *tfsdk.ConfigureProviderResponse, attr string) {
+	resp.Diagnostics.AddAttributeError(
+		tftypes.NewAttributePath().WithAttributeName(attr),
+		"Can't interpolate into provider block",
+		"Interpolating that value into the provider block doesn't give the provider enough information to run. Try hard-coding the value, instead.",
+	)
 }
